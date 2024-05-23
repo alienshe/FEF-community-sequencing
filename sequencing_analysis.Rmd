@@ -382,3 +382,9 @@ final_df_family_counts$phylum=gsub("_", " ",final_df_family_counts$phylum)
 final_df_family_counts|>paged_table()
 #write.csv(final_df_family_counts,"species_counts_by_group.csv")
 ```
+
+## Information on versions and session
+```{r}
+sessionInfo()
+```
+

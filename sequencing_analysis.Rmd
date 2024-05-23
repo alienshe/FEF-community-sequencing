@@ -1,0 +1,384 @@
+---
+title: "Sequence_data_cluster_analysis"
+author: "Sylvie nolf"
+date: "2024-05-23"
+output: 
+html_document:
+    code_folding: hide
+---
+```{r, message=FALSE, warning=FALSE}
+library(readxl, quietly = T)
+library(dplyr, quietly = T)
+library(data.table, quietly = T)
+library(phyloseq, quietly = T)
+library(tidyverse, quietly = T)
+library(stringr, quietly = T)
+library(DescTools, quietly = T)
+library(ggplot2, quietly = T)
+library(tidyr, quietly = T)
+library(vegan, quietly = T)
+library(phyloseq.extended, quietly = T)
+library(rstatix, quietly = T)
+library(ggpubr, quietly = T)
+library(rmarkdown)
+```
+## Parsing BLAST Output
+
+The output from the blastn search described earlier needs to be wrangled a bit to get it into a usable format. The below code takes the raw data from looking like this:
+```{r}
+read_tsv("Z:/PRJ-endophyte/UNITE_public_sym_consensus_sequences_backup_resume.BlastResult", col_names = F, show_col_types = F,n_max = 10)|>paged_table()
+```
+
+
+to looking like this:
+
+```{r}
+# read in blast data and subset to only clusters with more than one read, and take the top hit for each cluster.
+
+blast_data_sym <- read_tsv("Z:/PRJ-endophyte/UNITE_public_sym_consensus_sequences_backup_resume.BlastResult", col_names = F, show_col_types = F)
+
+#first for symptomatic tree data
+columns =c("qseqid","sseqid","pident","length","mismatch","gapopen","qstart","qend","sstart","send","evalue","bitscore")
+
+colnames(blast_data_sym)<-columns
+blast_data_sym$centroid_size=gsub(".*;seqs=","",blast_data_sym$qseqid)
+blast_data_sym$centroid_id=gsub("centroid=","",blast_data_sym$qseqid)
+blast_data_sym$centroid_id=gsub(";seqs=.*","",blast_data_sym$centroid_id)
+blast_data_sym<-blast_data_sym %>% relocate(centroid_id,centroid_size)
+blast_data_sym<-subset(blast_data_sym,blast_data_sym$centroid_size>1)
+blast_data_sym2 <- blast_data_sym[!duplicated(blast_data_sym$centroid_id), ]
+blast_data_sym2$SH=str_split_i(blast_data_sym2$sseqid,"\\|",3)
+#add in separate column for each taxonomic rank
+matrix_temp=str_split_fixed(blast_data_sym2$sseqid,"\\|",3)
+tax_df=data.frame("UDB"=matrix_temp[,1],"taxa"=matrix_temp[,2],"SH"=matrix_temp[,3])
+tax_df$UDB<-gsub(">","",tax_df$UDB)
+matrix_temp_2=str_split_fixed(tax_df$taxa,";",7)
+tax_df$kingdom=gsub(".__","",matrix_temp_2[,1])
+tax_df$phylum=gsub(".__","",matrix_temp_2[,2])
+tax_df$class=gsub(".__","",matrix_temp_2[,3])
+tax_df$order=gsub(".__","",matrix_temp_2[,4])
+tax_df$family=gsub(".__","",matrix_temp_2[,5])
+tax_df$genus=gsub(".__","",matrix_temp_2[,6])
+tax_df$species=gsub(".__","",matrix_temp_2[,7])
+merged_df_sym=cbind(blast_data_sym2,tax_df)[, -15]
+
+
+
+#next for asymptomatic tree data
+blast_data_asym_1 <- read_tsv("Z:/PRJ-endophyte/UNITE_public_asym_consensus_sequences_backup.BlastResult", col_names = F, show_col_types = F)
+blast_data_asym_2 <- read_tsv("Z:/PRJ-endophyte/UNITE_public_resume_con_backup_resume.BlastResult", col_names = F, show_col_types = F)
+blast_data_asym<-rbind(blast_data_asym_1,blast_data_asym_2)
+colnames(blast_data_asym)<-columns
+blast_data_asym$centroid_size=gsub(".*;seqs=","",blast_data_asym$qseqid)
+blast_data_asym$centroid_id=gsub("centroid=","",blast_data_asym$qseqid)
+blast_data_asym$centroid_id=gsub(";seqs=.*","",blast_data_asym$centroid_id)
+blast_data_asym<-blast_data_asym %>% relocate(centroid_id,centroid_size)
+blast_data_asym<-subset(blast_data_asym,blast_data_asym$centroid_size>1)
+blast_data_asym2 <- blast_data_asym[!duplicated(blast_data_asym$centroid_id), ]
+blast_data_asym2$SH=str_split_i(blast_data_asym2$sseqid,"\\|",3)
+
+#add in separate column for each taxonomic rank
+matrix_asymtemp=str_split_fixed(blast_data_asym2$sseqid,"\\|",3)
+tax_df_asym=data.frame("UDB"=matrix_asymtemp[,1],"taxa"=matrix_asymtemp[,2],"SH"=matrix_asymtemp[,3])
+tax_df_asym$UDB<-gsub(">","",tax_df_asym$UDB)
+matrix_asymtemp=str_split_fixed(tax_df_asym$taxa,";",7)
+
+tax_df_asym$kingdom=gsub(".__","",matrix_asymtemp[,1])
+tax_df_asym$phylum=gsub(".__","",matrix_asymtemp[,2])
+tax_df_asym$class=gsub(".__","",matrix_asymtemp[,3])
+tax_df_asym$order=gsub(".__","",matrix_asymtemp[,4])
+tax_df_asym$family=gsub(".__","",matrix_asymtemp[,5])
+tax_df_asym$genus=gsub(".__","",matrix_asymtemp[,6])
+tax_df_asym$species=gsub(".__","",matrix_asymtemp[,7])
+merged_df_asym=cbind(blast_data_asym2,tax_df_asym)[, -15]
+```
+
+```{r, class.source = "fold-show"}
+merged_df_sym|>paged_table()
+```
+
+```{r, class.source = "fold-show"}
+merged_df_asym|>paged_table()
+```
+
+
+## Parsing VSearch clustering output
+
+Similarly, vsearch outputs a strange single table that combines three separate tables, and need to be separated. The below code parses this and makes three neat data frames from each table. The one we will be using is the hit table referred to in the code as h df, and ends up looking like this:
+
+```{r}
+#read in vsearch cluster output table to contstruct OTU table for input to phyloseq
+
+
+#first for asymptomatic samples
+asym_df<-read_tsv("Z:/PRJ-endophyte/ucout_asym_reads.out", col_names = F, show_col_types = F)
+
+c_asym_df<-subset(asym_df,X1=="C")[,c("X2","X3","X9")]
+colnames(c_asym_df)=c("cluster_number","cluster_size","centroid_label")
+
+s_asym_df<-subset(asym_df,X1=="S")[,c("X2","X3","X9")]
+colnames(s_asym_df)=c("cluster_number","centroid_length","centroid_label")
+
+h_asym_df<-subset(asym_df,X1=="H")[,-c(1,6,7)]
+colnames(h_asym_df)=c("cluster_number","query_length","percent_similiarity_to_centroid","match_orientation","alignment","query_label","centroid_label")
+
+#then for symptomatic
+sym_df<-read_tsv("Z:/PRJ-endophyte/ucout_sym_reads.out", col_names = F, show_col_types = F)
+
+
+c_sym_df<-subset(sym_df,X1=="C")[,c("X2","X3","X9")]
+colnames(c_sym_df)=c("cluster_number","cluster_size","centroid_label")
+
+s_sym_df<-subset(sym_df,X1=="S")[,c("X2","X3","X9")]
+colnames(s_sym_df)=c("cluster_number","centroid_length","centroid_label")
+
+h_sym_df<-subset(sym_df,X1=="H")[,-c(1,6,7)]
+colnames(h_sym_df)=c("cluster_number","query_length","percent_similiarity_to_centroid","match_orientation","alignment","query_label","centroid_label")
+
+
+```
+```{r,class.source = "fold-show"}
+h_sym_df|>paged_table()
+```
+```{r,class.source = "fold-show"}
+h_asym_df|>paged_table()
+```
+
+
+
+## Creating phyloseq object
+
+The phyloseq package which will be used for further analysis requires 3 tables as inputs. 1: An OTU table which contains information on how many reads in each cluster were in each sample, 2: a taxonomy table showing the identification of each cluster at each taxonomic level, and 3: a sample table containing the names of each sample and any additional information to be used in analysis. The following code creates each of these in the format necesary and creates a phyloseq object
+
+
+### OTU table for phyloseq
+
+```{r}
+#read in summary of sequencing run to match read_ids to barcodes
+sequence_run_df<-read_tsv("Z:/PRJ-endophyte/sylvie/sequencing_raw/SN_Lib_1/sequencing_summary_FAX75472_80510af4_f3fa7a0a.txt")
+
+h_asym_df<-merge(h_asym_df,sequence_run_df[,c(5,25)],by.x = "query_label",by.y="read_id",all.x = TRUE,all.y=FALSE)
+
+h_sym_df<-merge(h_sym_df,sequence_run_df[,c(5,25)],by.x = "query_label",by.y="read_id",all.x = TRUE,all.y=FALSE)
+
+
+#create otu table
+asym_otu_table<-table(h_asym_df$centroid_label,h_asym_df$alias)
+sym_otu_table<-table(h_sym_df$centroid_label,h_sym_df$alias)
+merged_h_df<-rbind(h_sym_df,h_asym_df)
+merged_otu_table<-table(merged_h_df$centroid_label,merged_h_df$alias)
+merged_otu_table|>as.data.frame.matrix()|>paged_table()
+```
+
+### Taxonomy table for phyloseq
+
+```{r}
+#create taxonomy data frame for input into phyloseq
+asym_tax_df_for_phyloseq<-merged_df_asym[,c("centroid_id","kingdom","phylum","class","order","family","genus","species")]
+sym_tax_df_for_phyloseq<-merged_df_sym[,c("centroid_id","kingdom","phylum","class","order","family","genus","species")]
+merged_tax_df_for_phyloseq<-rbind(sym_tax_df_for_phyloseq,asym_tax_df_for_phyloseq)
+
+
+sample_df_asym=data.frame("barcode"=unique(h_asym_df$alias),"sample_type"="Asymptomatic tree")|>drop_na()
+sample_df_sym=data.frame("barcode"=unique(h_sym_df$alias),"sample_type"="Symptomatic healthy leaf")|>drop_na()
+merged_sample_df_proto=rbind(sample_df_asym,sample_df_sym)
+merged_tax_df_for_phyloseq <- merged_tax_df_for_phyloseq %>% tibble::column_to_rownames("centroid_id")
+merged_tax_df_for_phyloseq|>paged_table()
+```
+
+### Sample table for phyloseq
+```{r}
+# create dataframe with sample information for input to phyloseq
+barcode_index=data.frame("barcode"=c(paste("barcode0",4:9,sep=""), paste("barcode",10:23,sep="")),"sample_id"=c(paste("Asymptomatic tree ",1:10,sep=""),paste("Symptomatic tree healthy leaves ",1:10,sep="")))
+colnames(merged_otu_table)=barcode_index$sample_id
+merged_sample_df<-merge(merged_sample_df_proto,barcode_index,by.x="barcode",by.y="barcode")
+merged_sample_df|>paged_table()
+```
+
+### Create phyloseq object
+```{r}
+#convert types of sample, otu, and taxonomy tables to be the right format for input into phyloseq package
+merged_sample_df <- merged_sample_df %>% 
+    tibble::column_to_rownames("sample_id")
+otu_matrix=as.matrix(as.data.frame.matrix(merged_otu_table))
+tax_matrix=as.matrix(merged_tax_df_for_phyloseq)
+
+
+#create phyloseq object
+OTU = otu_table(otu_matrix,taxa_are_rows = TRUE)
+TAX = tax_table(tax_matrix)
+samples = sample_data(merged_sample_df)
+phyloseq_object=phyloseq(OTU,TAX, samples)
+phyloseq_object
+
+#also create another object without all the fungi that are unidentified at the phylum level
+phylo_object_no_incertae<-subset_taxa(phyloseq_object, !(phylum %in% c("Fungi_phy_Incertae_sedis")))
+
+#normalise abundances to be out of 100%
+phylo_object_no_incertae_transformed = transform_sample_counts(phylo_object_no_incertae, 
+                                                      function(x) 100 * x/sum(x))
+```
+
+
+## Analysis
+
+### Rarefaction curve
+
+The rarefaction curve can tell you if its likely that all diversity was captured in your study. Luckily, phyloseq extended has a convenient inbuilt function for this.
+
+```{r,message=FALSE,warning=FALSE}
+#plot rarefaction curve
+p<-ggrare(phyloseq_object, step = 1000, color = "sample_type", se = FALSE)+scale_color_discrete(labels=c("Asymptomatic field trees","Symptomatic field trees\n(healthy leaves)"), name="Group")+theme_classic()
+```
+```{r}
+p
+```
+
+### Shannon diversity
+
+Phyloseq also has convenient functions for calculating the Shannon diversity indices of each sample, which is done below. The Wilcoxon rank-sum test is performed to compare the indices between asymptomatic and symptomatic trees.
+
+```{r}
+#calculate shannon diversity and perform wilcox rank sum test to compare mean sizes of two groups
+richness_estimates<-estimate_richness(phyloseq_object, measures="Shannon")
+richness_estimates$sample_type<-str_split_i(rownames(richness_estimates)," ",1)
+
+#wilcox rank-sum test
+stat.test <- wilcox_test(data=richness_estimates,Shannon~sample_type) %>%
+  add_significance()
+stat.test
+```
+
+This can be nicely visualised with a box plot.
+
+```{r}
+#plot shannon diversity
+ggboxplot(data=richness_estimates,x="sample_type",y="Shannon", add = "jitter")+stat_compare_means(method="wilcox.test",label.x = 1.3, label.y = 5.5)+xlab("")+scale_x_discrete(labels=c("Asymptomatic field trees","Symptomatic field trees\n(healthy leaves)"))+ylab("Shannon diversity index")
+```
+
+## Comparing abundance of taxa
+
+Below a number of barcharts are made using phyloseq and ggplot to compare abundances of different fungal  taxonomic ranks and samples.
+
+More information on each of these figures can be found in the captions in the thesis.
+
+```{r}
+#create a series of charts comparing abundance of different taxa
+
+
+plot_bar(phyloseq_object, x = "Sample", y = "Abundance", fill ="phylum") + 
+  geom_bar(aes(color=phylum, fill=phylum), stat="identity", position="stack")+
+  theme_classic()+
+  theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1))
+
+plot_bar(phyloseq_object, x = "sample_type", y = "Abundance", fill ="phylum") + 
+  geom_bar(aes(color=phylum, fill=phylum), stat="identity", position="stack")+
+  theme_classic()
+
+plot_bar(phylo_object_no_incertae, x = "Sample", y = "Abundance", fill ="phylum") + geom_bar(aes(color=phylum, fill=phylum), stat="identity", position="stack")
+
+plot_bar(phylo_object_no_incertae, x = "sample_type", y = "Abundance", fill ="phylum") + geom_bar(aes(color=phylum, fill=phylum), stat="identity", position="stack")
+```
+```{r,fig.width = 9,fig.height = 12}
+require("fantaxtic")
+top_nested <- nested_top_taxa(phylo_object_no_incertae_transformed,
+                              top_tax_level = "phylum",
+                              nested_tax_level = "family",
+                              n_top_taxa = 3, 
+                              n_nested_taxa = 10)
+
+# Plot the relative abundances at two levels.
+plot_nested_bar(ps_obj = top_nested$ps_obj,
+                top_level = "phylum",
+                nested_level = "family",
+                sample_order = c(paste("Asymptomatic tree ",1:10,sep=""),paste("Symptomatic tree healthy leaves ",1:10,sep="")))+
+  guides(fill=guide_legend(nrow=10))+
+  theme(legend.key=element_blank(), legend.key.size=unit(1,"line"),legend.position = "top")+
+  ylab("Relative Abundance")+
+  scale_x_discrete(labels=c(paste("Asymptomatic tree ",1:10,sep=""),paste("Symptomatic tree ",1:10,"\n(healthy leaves)",sep="")))
+```
+
+# Analysis of cluster data
+
+## How many clusters were identified to each taxonomic rank?
+
+```{r}
+#calculate how many clusters were identified to each level
+
+merged_h_df_with_sample_groups<-merge(merged_h_df,barcode_index,by.x="alias",by.y="barcode",all.x=TRUE,all.y=FALSE)
+merged_h_df_with_sample_groups$sample_type<-str_split_i(merged_h_df_with_sample_groups$sample_id," ",1)
+
+tax_df_with_sample_types<-merge(data.frame(phyloseq_object@tax_table),merged_h_df_with_sample_groups[,c("centroid_label","sample_type")],by.x=0, by.y="centroid_label",all.x=TRUE,all.y=FALSE)
+
+with_phylum=tax_df_with_sample_types[!grepl(".*phy_Incertae_sedis",tax_df_with_sample_types$phylum),]
+with_class=tax_df_with_sample_types[!grepl(".*cls_Incertae_sedis",tax_df_with_sample_types$class),]
+with_order=tax_df_with_sample_types[!grepl(".*ord_Incertae_sedis",tax_df_with_sample_types$order),]
+with_family=tax_df_with_sample_types[!grepl(".*fam_Incertae_sedis",tax_df_with_sample_types$family),]
+with_genus=tax_df_with_sample_types[!grepl(".*fam_Incertae_sedis",tax_df_with_sample_types$family),]
+with_species=tax_df_with_sample_types[!grepl(".*_sp",tax_df_with_sample_types$species),]
+
+print("number of cluster identified as fungi")
+length(unique(tax_df_with_sample_types$Row.names))
+print("number of clusters with phylum:")
+length(unique(with_phylum$Row.names))
+
+print("number of clusters with class:")
+length(unique(c(with_class$Row.names)))
+
+print("number of clusters with order")
+length(unique(c(with_order$Row.names)))
+
+
+print("number of clusters with family")
+length(unique(c(with_family$Row.names)))
+
+
+
+print("number of clusters with genus")
+length(unique(c(with_genus$Row.names)))
+
+
+print("number of clusters with species")
+length(unique(c(with_species$Row.names)))
+```
+
+
+## How big were the clusters?
+```{r}
+#plot sizes of clusters
+ggplot() + 
+  
+  geom_jitter(aes(x="Symptomatic trees\n(healthy leaves)", y=(c_sym_df$cluster_size[c_sym_df$cluster_size>1])), width=0.2, alpha=.2)+
+  geom_jitter(aes(x="Asymptomatic trees", y=(c_asym_df$cluster_size[c_asym_df$cluster_size>1])),width = 0.2, alpha=.2)+
+  geom_boxplot(aes(x="Symptomatic trees\n(healthy leaves)", y=(c_sym_df$cluster_size[c_sym_df$cluster_size>1])),outlier.shape = NA, alpha=0) + 
+  geom_boxplot(aes(x= "Asymptomatic trees", y=(c_asym_df$cluster_size[c_asym_df$cluster_size>1])),outlier.shape = NA,alpha=0) +
+  scale_y_log10()+
+  theme_classic()+
+  xlab("")+
+  ylab("Size of clusters with more than one read")
+```
+
+## Which taxa were present in each sample group?
+```{r}
+#create csv listing the number of reads in clusters in each species
+temp_asym=data.frame("centoid_id"=merged_df_asym$centroid_id,"centroid_size"=as.numeric(merged_df_asym$centroid_size),"phylum"=merged_df_asym$phylum,"family"=merged_df_asym$family,"species"=merged_df_asym$species,"group"="asymptomatic")
+temp_sym=data.frame("centoid_id"=merged_df_sym$centroid_id,"centroid_size"=as.numeric(merged_df_sym$centroid_size),"phylum"=merged_df_sym$phylum,"family"=merged_df_sym$family,"species"=merged_df_sym$species,"group"="symptomatic")
+
+
+summary_df<-rbind(temp_asym,temp_sym)
+grouped_asym<-temp_asym|>group_by(species,group,phylum,family)|>summarise(num_reads=sum(centroid_size))
+grouped_sym<-temp_sym|>group_by(species,group,phylum,family)|>summarise(num_reads=sum(centroid_size))
+fun_df<-merge(grouped_asym,grouped_sym,by="species",all=TRUE)
+fun_df <- fun_df %>% mutate(phylum.y = ifelse(is.na(phylum.y), phylum.x, phylum.y))
+fun_df <- fun_df %>% mutate(family.y = ifelse(is.na(family.y), family.x, family.y))
+
+
+final_df_family_counts<-subset(fun_df, select=c("phylum.y","family.y","species","num_reads.x","num_reads.y"))
+colnames(final_df_family_counts)=c("phylum","family","species","asym_num_reads","sym_num_reads")
+final_df_family_counts<-final_df_family_counts[order(final_df_family_counts$phylum,final_df_family_counts$family, final_df_family_counts$species),]
+final_df_family_counts$species=gsub("_", " ",final_df_family_counts$species)
+final_df_family_counts$family=gsub("_", " ",final_df_family_counts$family)
+final_df_family_counts$phylum=gsub("_", " ",final_df_family_counts$phylum)
+final_df_family_counts|>paged_table()
+#write.csv(final_df_family_counts,"species_counts_by_group.csv")
+```

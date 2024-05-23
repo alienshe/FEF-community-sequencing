@@ -1,0 +1,3 @@
+Raw BLAST output files were too large to include here.
+
+Each file in this folder is a subset of 100 lines the real file just to show the structure of the output.

@@ -6,4 +6,4 @@ Reads were then clustered using the vsearch cluster_fast function. Minimum ident
 
 The consensus sequences input as query sequences to BLAST+ using the blastn function, and the UNITE fungal ITS database as the database. Output format 6 was specified and the minimum E-value was set to 1e-100.
 
-The output tables from blastn, along with the uclust-like output table from the clustering step were used as input for anlysis with phyloseq in R.
+The output tables from blastn, along with the uclust-like output table from the clustering step were used as input for anlysis with phyloseq in R, which can be seen in the sequencing_analysis files in this repo.

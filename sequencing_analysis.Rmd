@@ -1,6 +1,6 @@
 ---
 title: "Sequence_data_cluster_analysis"
-author: "Sylvie nolf"
+author: "Sylvie Nolf"
 date: "2024-05-23"
 output: 
 html_document:
@@ -262,22 +262,38 @@ Below a number of barcharts are made using phyloseq and ggplot to compare abunda
 
 More information on each of these figures can be found in the captions in the thesis.
 
-```{r}
+```{r,fig.width = 12,fig.height = 14}
 #create a series of charts comparing abundance of different taxa
 
 
-plot_bar(phyloseq_object, x = "Sample", y = "Abundance", fill ="phylum") + 
+plot_A<-plot_bar(phyloseq_object, x = "Sample", y = "Abundance", fill ="phylum") + 
   geom_bar(aes(color=phylum, fill=phylum), stat="identity", position="stack")+
   theme_classic()+
-  theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1))
+  theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1))+
+  theme(legend.position = "none")
 
-plot_bar(phyloseq_object, x = "sample_type", y = "Abundance", fill ="phylum") + 
+plot_B<-plot_bar(phyloseq_object, x = "sample_type", y = "Abundance", fill ="phylum") + 
   geom_bar(aes(color=phylum, fill=phylum), stat="identity", position="stack")+
-  theme_classic()
+  theme_classic()+
+  xlab("Sample type")+
+  scale_x_discrete(labels=c("Aysmptomatic tree","Symptomatic tree healthy leaves"))
 
-plot_bar(phylo_object_no_incertae, x = "Sample", y = "Abundance", fill ="phylum") + geom_bar(aes(color=phylum, fill=phylum), stat="identity", position="stack")
+plot_C<-plot_bar(phylo_object_no_incertae, x = "Sample", y = "Abundance", fill ="phylum") + geom_bar(aes(color=phylum, fill=phylum), stat="identity", position="stack")+
+  
+  theme_classic()+
+  theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1))+
+  theme(legend.position = "none")
 
-plot_bar(phylo_object_no_incertae, x = "sample_type", y = "Abundance", fill ="phylum") + geom_bar(aes(color=phylum, fill=phylum), stat="identity", position="stack")
+plot_D<-plot_bar(phylo_object_no_incertae, x = "sample_type", y = "Abundance", fill ="phylum") + geom_bar(aes(color=phylum, fill=phylum), stat="identity", position="stack")+
+  xlab("Sample type")+
+  theme(axis.text.x = element_text(angle = 0, vjust = 1, hjust = 0.5))+
+  theme_classic()+
+  scale_x_discrete(labels=c("Aysmptomatic tree","Symptomatic tree healthy leaves"))
+
+
+ggarrange(plot_A, plot_B, plot_C,plot_D, 
+          labels = c("A", "B", "C","D"),
+          ncol = 2, nrow = 2)
 ```
 ```{r,fig.width = 9,fig.height = 12}
 require("fantaxtic")
